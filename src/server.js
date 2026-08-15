@@ -12,10 +12,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// IMPORTANT: Raw body for webhook verification
-app.use('/webhook', express.raw({ type: 'application/json' }));
+// IMPORTANT: Raw body for webhook verification (must come BEFORE express.json())
+app.use('/webhook/stripe', express.raw({ type: 'application/json' }));
 
-// Middleware
+// Regular middleware
 app.use(helmet());
 app.use(cors());
 app.use(morgan('dev'));
@@ -53,12 +53,12 @@ async function startServer() {
             console.log(`  POST  /meter                         - Record a billable action`);
             console.log(`  GET   /meter/usage/:tenantId         - Get current usage`);
             console.log(`  GET   /meter/history/:tenantId       - Get usage history`);
-            console.log(`  POST  /checkout/create               - Create Stripe Checkout session`);
-            console.log(`  GET   /checkout/success              - Checkout success page`);
-            console.log(`  GET   /checkout/cancel               - Checkout cancel page`);
-            console.log(`  POST  /webhook/stripe                - Stripe webhook`);
+            console.log(`  POST  /checkout/create               - Create Stripe Checkout session (mock)`);
+            console.log(`  POST  /webhook/mock                  - Mock Stripe webhook`);
+            console.log(`  POST  /webhook/stripe                - Stripe webhook (mock mode)`);
             console.log(`  GET   /health                        - Health check`);
             console.log(`\n📊 Test Tenant ID: ${tenant.id}`);
+            console.log(`\n💡 Try: POST /webhook/mock with { "tenantId": "${tenant.id}", "planId": "plan-pro" }`);
         });
     } catch (error) {
         console.error('❌ Failed to start server:', error);

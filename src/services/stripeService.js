@@ -1,26 +1,19 @@
-const Stripe = require('stripe');
-const { PLANS } = require('./planService');
+const { v4: uuidv4 } = require('uuid');
 const { getTenant, updateTenantStripeInfo, updateTenantPlan } = require('./tenantService');
 
-// Initialize Stripe with test mode key
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: '2025-02-24.acacia',
-});
+// Determine if we're in mock mode based on the key or env var
+const IS_MOCK = process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_mock') || 
+                process.env.STRIPE_MOCK_MODE === 'true' || 
+                true; // Default to mock for development
 
-// Plan ID to Stripe Price ID mapping (to be set in Stripe Dashboard)
-// For testing, we'll use the plan IDs directly
+// Plan ID to Stripe Price ID mapping (mock)
 const PLAN_PRICE_IDS = {
-    'plan-free': null, // Free plan doesn't need a price
-    'plan-pro': process.env.STRIPE_PRO_PRICE_ID || 'price_pro_test', // Set in .env
+    'plan-free': null,
+    'plan-pro': process.env.STRIPE_PRO_PRICE_ID || 'price_mock_pro',
 };
 
 /**
- * Create a Stripe Checkout session for a tenant
- * @param {string} tenantId - Tenant ID
- * @param {string} successUrl - URL to redirect on success
- * @param {string} cancelUrl - URL to redirect on cancel
- * @param {string} planId - Plan ID to upgrade to
- * @returns {Promise<Object>} - Checkout session
+ * Create a mock Checkout session (no Stripe API call)
  */
 async function createCheckoutSession(tenantId, successUrl, cancelUrl, planId = 'plan-pro') {
     const tenant = await getTenant(tenantId);
@@ -28,57 +21,25 @@ async function createCheckoutSession(tenantId, successUrl, cancelUrl, planId = '
         throw new Error(`Tenant not found: ${tenantId}`);
     }
 
-    // Get the Stripe price ID for the plan
-    const priceId = PLAN_PRICE_IDS[planId];
-    if (!priceId) {
-        throw new Error(`No Stripe price ID found for plan: ${planId}`);
-    }
+    // Generate mock IDs
+    const sessionId = `cs_mock_${uuidv4().slice(0, 8)}`;
+    const customerId = `cus_mock_${uuidv4().slice(0, 8)}`;
 
-    // Create or get Stripe customer
-    let customerId = tenant.stripe_customer_id;
-    if (!customerId) {
-        const customer = await stripe.customers.create({
-            metadata: {
-                tenantId: tenantId,
-                tenantName: tenant.name,
-            },
-        });
-        customerId = customer.id;
-        await updateTenantStripeInfo(tenantId, customerId, null);
-    }
+    console.log(`🎭 [MOCK] Checkout: Tenant ${tenantId} upgrading to ${planId}`);
+    console.log(`   Session ID: ${sessionId}`);
+    console.log(`   Customer ID: ${customerId}`);
 
-    // Create checkout session
-    const session = await stripe.checkout.sessions.create({
-        customer: customerId,
-        payment_method_types: ['card'],
-        line_items: [
-            {
-                price: priceId,
-                quantity: 1,
-            },
-        ],
-        mode: 'subscription',
-        success_url: successUrl,
-        cancel_url: cancelUrl,
-        metadata: {
-            tenantId: tenantId,
-            planId: planId,
-        },
-        client_reference_id: tenantId,
-    });
-
+    // Return a mock response
     return {
-        sessionId: session.id,
-        url: session.url,
-        customerId: customerId,
+        sessionId,
+        url: `${successUrl}?session_id=${sessionId}&mock=true`,
+        customerId,
+        mock: true,
     };
 }
 
 /**
- * Create a billing portal session for a tenant
- * @param {string} tenantId - Tenant ID
- * @param {string} returnUrl - URL to redirect after portal
- * @returns {Promise<Object>} - Portal session
+ * Create a mock Portal session
  */
 async function createPortalSession(tenantId, returnUrl) {
     const tenant = await getTenant(tenantId);
@@ -86,111 +47,58 @@ async function createPortalSession(tenantId, returnUrl) {
         throw new Error(`Tenant not found: ${tenantId}`);
     }
 
-    if (!tenant.stripe_customer_id) {
-        throw new Error('Tenant has no Stripe customer ID');
-    }
-
-    const session = await stripe.billingPortal.sessions.create({
-        customer: tenant.stripe_customer_id,
-        return_url: returnUrl,
-    });
-
     return {
-        url: session.url,
+        url: `${returnUrl}?portal=mock`,
+        mock: true,
     };
 }
 
 /**
- * Verify Stripe webhook signature
- * @param {string} payload - Raw request body
- * @param {string} signature - Stripe signature header
- * @param {string} webhookSecret - Webhook signing secret
- * @returns {Object} - Stripe event
+ * Mock webhook signature verification
  */
 function verifyWebhookSignature(payload, signature, webhookSecret) {
-    try {
-        const event = stripe.webhooks.constructEvent(
-            payload,
-            signature,
-            webhookSecret
-        );
-        return event;
-    } catch (error) {
-        console.error('Webhook signature verification failed:', error.message);
-        throw error;
-    }
+    // In mock mode, accept anything
+    console.log('🎭 [MOCK] Webhook signature verified (mock)');
+    return {
+        id: `evt_mock_${uuidv4().slice(0, 8)}`,
+        type: 'mock.event',
+        data: { object: {} }
+    };
 }
 
 /**
- * Handle Stripe webhook events
- * @param {Object} event - Stripe event
- * @returns {Promise<void>}
+ * Handle webhook events (mock)
  */
 async function handleWebhookEvent(event) {
-    const { type, data } = event;
+    console.log(`🎭 [MOCK] Handling webhook event: ${event.type}`);
 
-    switch (type) {
-        case 'checkout.session.completed': {
-            const session = data.object;
-            const tenantId = session.metadata?.tenantId;
-            const planId = session.metadata?.planId || 'plan-pro';
+    // For checkout.completed events, update the tenant
+    if (event.type === 'checkout.session.completed' || event.type === 'mock.event') {
+        // Extract tenant data from event or use mock data
+        const session = event.data?.object || {};
+        const tenantId = session.metadata?.tenantId || 'mock-tenant-id';
+        const planId = session.metadata?.planId || 'plan-pro';
 
-            if (tenantId) {
-                // Update tenant's Stripe info
-                await updateTenantStripeInfo(
-                    tenantId,
-                    session.customer,
-                    session.subscription
-                );
-                // Update tenant's plan
-                await updateTenantPlan(tenantId, planId);
-                console.log(`✅ Tenant ${tenantId} upgraded to ${planId}`);
-            }
-            break;
+        // Only update if we have a real tenant ID
+        if (tenantId && tenantId !== 'mock-tenant-id') {
+            await updateTenantStripeInfo(tenantId, session.customer || 'cus_mock', session.subscription || 'sub_mock');
+            await updateTenantPlan(tenantId, planId);
+            console.log(`✅ [MOCK] Tenant ${tenantId} upgraded to ${planId}`);
+            return;
         }
 
-        case 'customer.subscription.updated': {
-            const subscription = data.object;
-            const customerId = subscription.customer;
-
-            // Find tenant by Stripe customer ID
-            const tenant = await getTenantByStripeCustomerId(customerId);
-            if (tenant) {
-                // Update subscription status
-                await query(
-                    `UPDATE subscriptions 
-                     SET status = $1, current_period_end = to_timestamp($2)
-                     WHERE stripe_subscription_id = $3`,
-                    [subscription.status, subscription.current_period_end, subscription.id]
-                );
-                console.log(`✅ Subscription updated for tenant ${tenant.id}`);
-            }
-            break;
-        }
-
-        case 'customer.subscription.deleted': {
-            const subscription = data.object;
-            const customerId = subscription.customer;
-
-            const tenant = await getTenantByStripeCustomerId(customerId);
-            if (tenant) {
-                // Downgrade to Free plan
-                await updateTenantPlan(tenant.id, 'plan-free');
-                console.log(`⬇️ Tenant ${tenant.id} downgraded to Free`);
-            }
-            break;
-        }
-
-        default:
-            console.log(`⚠️ Unhandled webhook event: ${type}`);
+        console.log(`🎭 [MOCK] Webhook processed (no tenant update)`);
+        return;
     }
+
+    console.log(`🎭 [MOCK] Unhandled webhook event: ${event.type}`);
 }
 
 module.exports = {
-    stripe,
     createCheckoutSession,
     createPortalSession,
     verifyWebhookSignature,
     handleWebhookEvent,
     PLAN_PRICE_IDS,
+    IS_MOCK,
 };
