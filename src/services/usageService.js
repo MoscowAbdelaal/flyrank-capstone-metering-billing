@@ -2,17 +2,17 @@ const { v4: uuidv4 } = require('uuid');
 const { query } = require('../config/database');
 const { getTenantWithPlan } = require('./tenantService');
 
-// Pricing constants (in cents)
+// Pricing constants (in dollars)
 const PRICING = {
-    api_call: 1, // $0.01 per API call
-    ai_input_token: 0.001, // $0.00001 per input token
-    ai_cached_input_token: 0.0005, // $0.000005 per cached input token
-    ai_output_token: 0.002, // $0.00002 per output token
-    ai_reasoning_token: 0.003, // $0.00003 per reasoning token
+    api_call: 0.001, // $0.001 per API call
+    ai_input_token: 0.000001, // $0.000001 per input token
+    ai_cached_input_token: 0.0000005, // $0.0000005 per cached input token
+    ai_output_token: 0.000002, // $0.000002 per output token
+    ai_reasoning_token: 0.000003, // $0.000003 per reasoning token
 };
 
 async function recordUsage({ tenantId, eventType, quantity, idempotencyKey, metadata = {} }) {
-    // Check idempotency - prevent double counting
+    // Check idempotency
     if (idempotencyKey) {
         const existing = await query(
             'SELECT * FROM usage_events WHERE idempotency_key = $1',
@@ -24,13 +24,11 @@ async function recordUsage({ tenantId, eventType, quantity, idempotencyKey, meta
         }
     }
 
-    // Get tenant with plan
     const tenant = await getTenantWithPlan(tenantId);
     if (!tenant) {
         throw new Error(`Tenant not found: ${tenantId}`);
     }
 
-    // Calculate cost based on event type
     let cost = 0;
     let effectiveQuantity = quantity;
 
@@ -51,21 +49,18 @@ async function recordUsage({ tenantId, eventType, quantity, idempotencyKey, meta
             cost = quantity * PRICING.ai_reasoning_token;
             break;
         case 'mixed_tokens':
-            // For mixed tokens, metadata contains breakdown
-            const { input, cachedInput, output, reasoning } = metadata;
-            cost = (input || 0) * PRICING.ai_input_token +
-                   (cachedInput || 0) * PRICING.ai_cached_input_token +
-                   (output || 0) * PRICING.ai_output_token +
-                   (reasoning || 0) * PRICING.ai_reasoning_token;
+            const { input = 0, cachedInput = 0, output = 0, reasoning = 0 } = metadata;
+            cost = (input * PRICING.ai_input_token) +
+                   (cachedInput * PRICING.ai_cached_input_token) +
+                   (output * PRICING.ai_output_token) +
+                   (reasoning * PRICING.ai_reasoning_token);
             break;
         default:
             throw new Error(`Unknown event type: ${eventType}`);
     }
 
-    // Round to 6 decimal places
     cost = Math.round(cost * 1000000) / 1000000;
 
-    // Insert usage event
     const id = uuidv4();
     const result = await query(
         `INSERT INTO usage_events (id, tenant_id, event_type, quantity, idempotency_key, cost)
@@ -83,10 +78,8 @@ async function checkQuota(tenantId, eventType, requestedQuantity = 1) {
         throw new Error(`Tenant not found: ${tenantId}`);
     }
 
-    // Get current usage for this tenant
     const usage = await getCurrentUsage(tenantId);
 
-    // Check API calls limit
     if (eventType === 'api_call') {
         const used = usage.api_calls || 0;
         const limit = tenant.api_calls_limit || 1000;
@@ -104,12 +97,11 @@ async function checkQuota(tenantId, eventType, requestedQuantity = 1) {
             allowed: true,
             used,
             limit,
-            remaining: limit - used,
+            remaining: limit - used - requestedQuantity,
             exceeded: false
         };
     }
 
-    // Check AI tokens limit
     if (['ai_input_token', 'ai_cached_input_token', 'ai_output_token', 'ai_reasoning_token', 'mixed_tokens'].includes(eventType)) {
         const used = usage.ai_tokens || 0;
         const limit = tenant.ai_tokens_limit || 100000;
@@ -127,7 +119,7 @@ async function checkQuota(tenantId, eventType, requestedQuantity = 1) {
             allowed: true,
             used,
             limit,
-            remaining: limit - used,
+            remaining: limit - used - requestedQuantity,
             exceeded: false
         };
     }
