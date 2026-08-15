@@ -12,6 +12,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// IMPORTANT: Raw body for webhook verification
+app.use('/webhook', express.raw({ type: 'application/json' }));
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -21,8 +24,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 const meterRoutes = require('./routes/meter');
+const checkoutRoutes = require('./routes/checkout');
+const webhookRoutes = require('./routes/webhook');
 
 app.use('/meter', meterRoutes);
+app.use('/checkout', checkoutRoutes);
+app.use('/webhook', webhookRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -36,7 +43,6 @@ async function startServer() {
         await seedPlans();
         await seedTenants();
 
-        // Get the test tenant ID for demo
         const tenant = await getOrCreateTestTenant();
         console.log(`\n📊 Test Tenant ID: ${tenant.id}`);
 
@@ -44,12 +50,15 @@ async function startServer() {
             console.log(`\n🚀 Metering & Billing Engine running at http://localhost:${PORT}`);
             console.log(`📚 Health check: http://localhost:${PORT}/health`);
             console.log(`\n📋 Endpoints:`);
-            console.log(`  POST  /meter                    - Record a billable action`);
-            console.log(`  GET   /meter/usage/:tenantId    - Get current usage`);
-            console.log(`  GET   /meter/history/:tenantId  - Get usage history`);
-            console.log(`  GET   /health                   - Health check`);
+            console.log(`  POST  /meter                         - Record a billable action`);
+            console.log(`  GET   /meter/usage/:tenantId         - Get current usage`);
+            console.log(`  GET   /meter/history/:tenantId       - Get usage history`);
+            console.log(`  POST  /checkout/create               - Create Stripe Checkout session`);
+            console.log(`  GET   /checkout/success              - Checkout success page`);
+            console.log(`  GET   /checkout/cancel               - Checkout cancel page`);
+            console.log(`  POST  /webhook/stripe                - Stripe webhook`);
+            console.log(`  GET   /health                        - Health check`);
             console.log(`\n📊 Test Tenant ID: ${tenant.id}`);
-            console.log(`💡 Try: curl http://localhost:3000/meter/usage/${tenant.id}`);
         });
     } catch (error) {
         console.error('❌ Failed to start server:', error);
