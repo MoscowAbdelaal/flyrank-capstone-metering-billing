@@ -26,10 +26,12 @@ app.use(express.urlencoded({ extended: true }));
 const meterRoutes = require('./routes/meter');
 const checkoutRoutes = require('./routes/checkout');
 const webhookRoutes = require('./routes/webhook');
+const reportRoutes = require('./routes/report');
 
 app.use('/meter', meterRoutes);
 app.use('/checkout', checkoutRoutes);
 app.use('/webhook', webhookRoutes);
+app.use('/report', reportRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -56,9 +58,11 @@ async function startServer() {
             console.log(`  POST  /checkout/create               - Create Stripe Checkout session (mock)`);
             console.log(`  POST  /webhook/mock                  - Mock Stripe webhook`);
             console.log(`  POST  /webhook/stripe                - Stripe webhook (mock mode)`);
+            console.log(`  GET   /report/usage/:tenantId        - Get detailed usage report`);
+            console.log(`  GET   /report/cost/:tenantId         - Get cost breakdown`);
+            console.log(`  POST  /report/token-cost             - Calculate token cost with AI pricing`);
             console.log(`  GET   /health                        - Health check`);
             console.log(`\n📊 Test Tenant ID: ${tenant.id}`);
-            console.log(`\n💡 Try: POST /webhook/mock with { "tenantId": "${tenant.id}", "planId": "plan-pro" }`);
         });
     } catch (error) {
         console.error('❌ Failed to start server:', error);
